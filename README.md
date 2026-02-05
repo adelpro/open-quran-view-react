@@ -1,5 +1,7 @@
 # Open Quran View - React + TypeScript Playground
 
+[NPM Package](https://www.npmjs.com/package/open-quran-view)
+
 This playground demonstrates the `OpenQuranView` React component with full TypeScript support.
 
 ## Usage
@@ -18,7 +20,6 @@ pnpm dev
 - React 18 with TypeScript
 - Vite for fast development
 - Hot Module Replacement (HMR)
-- Workspace dependency resolution (`open-quran-view: workspace:*`)
 
 ## Component Props
 
