@@ -2,6 +2,8 @@
 
 [NPM Package](https://www.npmjs.com/package/open-quran-view)
 
+[Live Demo](https://open-quran-view-react.netlify.app/)
+
 This playground demonstrates the `OpenQuranView` React component with full TypeScript support.
 
 ## Usage
