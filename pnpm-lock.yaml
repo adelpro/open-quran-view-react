@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       open-quran-view:
-        specifier: ^0.2.0
-        version: 0.2.0(react@18.3.1)
+        specifier: ^0.2.1
+        version: 0.2.1(react@18.3.1)
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -900,8 +900,8 @@ packages:
   node-releases@2.0.27:
     resolution: {integrity: sha512-nmh3lCkYZ3grZvqcCH+fjmQ7X+H0OeZgP40OierEaAptX4XofMh5kwNbWh7lBduUzCcV/8kZ+NDLCwm2iorIlA==}
 
-  open-quran-view@0.2.0:
-    resolution: {integrity: sha512-Or2PvIR9ak8XqYNVEj+ULv1ga0DTvGF4fOJTwTuwiDq3GZ51eXFro27bEwv1Tz99pl1+JOFxfniGpV769AHiNA==}
+  open-quran-view@0.2.1:
+    resolution: {integrity: sha512-l/g5H/Sy64OCNrYOor4wB/TGAE7OsVwRFHt8a32+ewOIqCynW3nWSqQUh5ePJjibYeuq3+mnFxFtAQ7FVXRwKw==}
     peerDependencies:
       react: '>=18'
 
@@ -1903,7 +1903,7 @@ snapshots:
 
   node-releases@2.0.27: {}
 
-  open-quran-view@0.2.0(react@18.3.1):
+  open-quran-view@0.2.1(react@18.3.1):
     dependencies:
       react: 18.3.1
 
