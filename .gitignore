@@ -1,3 +1,6 @@
+# emv
+.env
+
 # Logs
 logs
 *.log
