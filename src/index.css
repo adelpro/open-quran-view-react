@@ -11,6 +11,18 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Dialog theming */
+  --radius-lg: 12px;
+  --radius-md: 8px;
+  --color-surface-light: #ffffff;
+  --color-surface-dark: #2a2a3e;
+  --color-text-light: #2c3e50;
+  --color-text-dark: #ffffff;
+  --color-border-light: #e0e0e0;
+  --color-border-dark: #404060;
+  --color-accent: #6366f1;
+  --transition-fast: 0.2s ease;
 }
 
 a {

@@ -1,7 +1,15 @@
 import { useState, useCallback } from "react";
 import { OpenQuranView } from "open-quran-view/view";
-import type { MushafLayout } from "open-quran-view/view/react";
+import type { MushafLayout, WordClickedData } from "open-quran-view/view/react";
 import "./App.css";
+import quranWordsData from "../data/tafseers/quran-words.json";
+import type {
+  WordMap,
+  WordTafseer,
+  VerseTafseer,
+  SelectedTafseer,
+} from "./types/tafseer";
+import { TafseerDialog } from "./components/TafseerDialog";
 
 const MUSHAF_OPTIONS: { value: MushafLayout; label: string }[] = [
   { value: "hafs-v2", label: "Hafs (QCF V2)" },
@@ -9,21 +17,52 @@ const MUSHAF_OPTIONS: { value: MushafLayout; label: string }[] = [
   { value: "hafs-unicode", label: "Hafs uncode (digital khat)" },
 ];
 
+const quranWords = quranWordsData as WordMap;
+
 function App() {
   const [page, setPage] = useState(1);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [mushafLayout, setMushafLayout] = useState<MushafLayout>("hafs-v2");
+  const [selectedTafseer, setSelectedTafseer] =
+    useState<SelectedTafseer | null>(null);
 
   const handlePageChange = useCallback((newPage: number) => {
     setPage(newPage);
   }, []);
 
-  const handleWordClick = useCallback(
-    (word: { id: number; surahNumber?: number; ayahNumber?: number }) => {
-      console.log("Word clicked:", word);
-    },
-    [],
-  );
+  const handleWordClick = useCallback((word: WordClickedData) => {
+    if (word.charType === "end") {
+      const verseKey = `${word.surahNumber}:${word.ayahNumber}`;
+      const verseTafseer = quranWords[verseKey] as VerseTafseer | undefined;
+      if (verseTafseer) {
+        setSelectedTafseer({
+          tafseer: verseTafseer.tafseer,
+          verse: verseTafseer.verse,
+          surah: verseTafseer.surah,
+        });
+      }
+      return;
+    }
+
+    if (word.charType === "word") {
+      const wordKey = `${word.surahNumber}:${word.ayahNumber}:${word.position}`;
+      const wordTafseer = quranWords[wordKey] as WordTafseer | undefined;
+      if (wordTafseer) {
+        setSelectedTafseer({
+          tafseer: wordTafseer.tafseer,
+          verse: wordTafseer.verse,
+          surah: wordTafseer.surah,
+          position: word.position,
+          text: wordTafseer.text,
+        });
+      }
+      return;
+    }
+  }, []);
+
+  const closeTafseerDialog = useCallback(() => {
+    setSelectedTafseer(null);
+  }, []);
 
   const handleLoad = useCallback((layout: unknown) => {
     console.log("Page loaded:", layout);
@@ -151,6 +190,11 @@ function App() {
           </div>
         </div>
       </div>
+      <TafseerDialog
+        selectedTafseer={selectedTafseer}
+        theme={theme}
+        onClose={closeTafseerDialog}
+      />
     </div>
   );
 }
