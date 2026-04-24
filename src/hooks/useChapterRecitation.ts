@@ -1,114 +1,61 @@
-import { useState, useEffect, useRef } from "react";
-import type { ChapterRecitation, VerseTimestamp } from "../types/audio";
-
-const QURAN_API_BASE = import.meta.env.VITE_QURAN_API_BASE || "https://apis.quran.foundation";
-const QURAN_OAUTH_ENDPOINT = import.meta.env.VITE_QURAN_OAUTH_ENDPOINT || "https://oauth2.quran.foundation";
+import { useState, useCallback } from "react";
+import { quranClient } from "../lib/quranClient";
+import type { VerseTimestamp } from "../types/audio";
+import type { Segment } from "@quranjs/api";
 
 type UseChapterRecitationResult = {
-  audioUrl: string | null;
-  timestamps: VerseTimestamp[];
+  verses: VerseTimestamp[];
   loading: boolean;
   error: string | null;
+  play: () => void;
 };
 
-interface TokenCache {
-  token: string;
-  expiresAt: number;
-}
-
 export function useChapterRecitation(
-  reciterId: number | null,
-  surah: number | null
+  reciterId: number,
+  surah: number
 ): UseChapterRecitationResult {
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [timestamps, setTimestamps] = useState<VerseTimestamp[]>([]);
+  const [verses, setVerses] = useState<VerseTimestamp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tokenCacheRef = useRef<TokenCache | null>(null);
 
-  const getAccessToken = async (): Promise<string> => {
-    // Return cached token if still valid
-    if (tokenCacheRef.current && Date.now() < tokenCacheRef.current.expiresAt) {
-      return tokenCacheRef.current.token;
-    }
-
-    const clientId = import.meta.env.VITE_QURAN_CLIENT_ID;
-    const clientSecret = import.meta.env.VITE_QURAN_CLIENT_SECRET;
-
-    if (!clientId || !clientSecret) {
-      throw new Error("Missing API credentials in .env");
-    }
-
-    const tokenUrl = `${QURAN_OAUTH_ENDPOINT}/oauth/token`;
-    const response = await fetch(tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Token fetch failed: HTTP ${response.status}`);
-    }
-
-    const data = await response.json() as { access_token: string; expires_in: number };
-    tokenCacheRef.current = {
-      token: data.access_token,
-      expiresAt: Date.now() + (data.expires_in - 60) * 1000, // Refresh 1 min early
-    };
-
-    return data.access_token;
-  };
-
-  useEffect(() => {
-    if (!reciterId || !surah) {
-      setAudioUrl(null);
-      setTimestamps([]);
-      return;
-    }
-
-    let cancelled = false;
+  const play = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    const fetchData = async () => {
-      try {
-        const accessToken = await getAccessToken();
-        if (cancelled) return;
+    try {
+      // Get verse recitations with segments for word-level timing
+      const { audioFiles } = await quranClient.audio.findVerseRecitationsByChapter(
+        surah as unknown as import("@quranjs/api").ChapterId,
+        String(reciterId),
+        { fields: { segments: true } }
+      );
 
-        const url = `${QURAN_API_BASE}/content/api/v4/chapter_recitations/${reciterId}/${surah}?segments=true`;
-        const res = await fetch(url, {
-          headers: {
-            "x-client-id": import.meta.env.VITE_QURAN_CLIENT_ID,
-            "x-auth-token": accessToken,
-          },
-        });
-
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json() as ChapterRecitation;
-        if (cancelled) return;
-
-        setAudioUrl(data.audio_file.audio_url);
-        setTimestamps(data.audio_file.timestamps || []);
-        setLoading(false);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : "Unknown error");
-        setLoading(false);
+      if (!audioFiles || audioFiles.length === 0) {
+        throw new Error("No audio files found for this surah and reciter");
       }
-    };
 
-    fetchData();
+      // Build timestamps from verse recitations
+      const verseTimestamps: VerseTimestamp[] = audioFiles.map((audio) => {
+        return {
+          verse_key: audio.verseKey,
+          url: audio.url.startsWith("http") ? audio.url : `https://verses.quran.com/${audio.url}`,
+          timestamp_from: 0,
+          timestamp_to: 0,
+          segments: (audio.segments || []).map((seg: Segment) => [
+            seg[1], // wordIndex
+            seg[2], // startMs
+            seg[3], // endMs
+          ] as [number, number, number]),
+        };
+      });
 
-    return () => {
-      cancelled = true;
-    };
+      setVerses(verseTimestamps);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
   }, [reciterId, surah]);
 
-  return { audioUrl, timestamps, loading, error };
+  return { verses, loading, error, play };
 }

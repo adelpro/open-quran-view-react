@@ -1,6 +1,10 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { OpenQuranView } from "open-quran-view/view";
-import type { MushafLayout, WordClickedData } from "open-quran-view/view/react";
+import type {
+  MushafLayout,
+  WordClickedData,
+  PageLayout,
+} from "open-quran-view/view/react";
 import "./App.css";
 import quranWordsData from "../data/tafseers/quran-words.json";
 import type {
@@ -13,34 +17,13 @@ import { TafseerDialog } from "./components/TafseerDialog";
 import { AudioPlayer } from "./components/AudioPlayer";
 import { useChapterRecitation } from "./hooks/useChapterRecitation";
 import { useWordTimestamps } from "./hooks/useWordTimestamps";
+import { quranClient } from "./lib/quranClient";
+import { Language } from "@quranjs/api";
 
 const MUSHAF_OPTIONS: { value: MushafLayout; label: string }[] = [
   { value: "hafs-v2", label: "Hafs (QCF V2)" },
   { value: "hafs-v4", label: "Hafs (QCF V4 with tajweed)" },
   { value: "hafs-unicode", label: "Hafs uncode (digital khat)" },
-];
-
-// Popular reciters (misriy = Mishary Rashid Alafasy)
-const RECITERS: { id: number; name: string }[] = [
-  { id: 1, name: "Mishary Rashid Alafasy" },
-  { id: 2, name: "Mahmoud Khalil Al-Husary" },
-  { id: 3, name: "Abdul Basit Abdul Samad" },
-  { id: 4, name: "Mohamed Siddiq Al-Minshawi" },
-  { id: 5, name: "Hani Ar-Rifai" },
-];
-
-// First 10 surahs for demo
-const SURAH_OPTIONS: { value: number; name: string }[] = [
-  { value: 1, name: "Al-Fatiha (The Opening)" },
-  { value: 2, name: "Al-Baqarah (The Cow)" },
-  { value: 36, name: "Ya-Sin" },
-  { value: 55, name: "Ar-Rahman (The Beneficent)" },
-  { value: 67, name: "Al-Mulk (The Sovereignty)" },
-  { value: 18, name: "Al-Kahf (The Cave)" },
-  { value: 56, name: "Al-Waqiah (The Event)" },
-  { value: 51, name: "Ad-Dhariyat (The Winnowing Winds)" },
-  { value: 73, name: "Al-Muzzammil (The Enshrouded One)" },
-  { value: 55, name: "Ar-Rahman (The Beneficent)" },
 ];
 
 const quranWords = quranWordsData as WordMap;
@@ -55,16 +38,101 @@ function App() {
   // Audio state
   const [currentReciter, setCurrentReciter] = useState<number>(1);
   const [currentSurah, setCurrentSurah] = useState<number>(1);
-  const [currentTime, setCurrentTime] = useState(0);
   const [activeWordRect, setActiveWordRect] = useState<DOMRect | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const quranContainerRef = useRef<HTMLDivElement>(null);
 
   // Word registry for highlighting
   const wordRectsRef = useRef<Map<number, DOMRect>>(new Map());
 
-  const { audioUrl, timestamps, error: audioError } =
+  const { verses, loading: audioLoading, error: audioError, play } =
     useChapterRecitation(currentReciter, currentSurah);
 
-  const { wordTimestamps } = useWordTimestamps(timestamps);
+  const [reciters, setReciters] = useState<{ id: number; name: string }[]>([]);
+  const [allSurahs, setAllSurahs] = useState<
+    { value: number; name: string; page: number }[]
+  >([]);
+  const [availableChapterIds, setAvailableChapterIds] = useState<number[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [recitationsRes, chaptersRes] = await Promise.all([
+          quranClient.resources.findAllRecitations({
+            language: Language.ENGLISH,
+          }),
+          quranClient.chapters.findAll({ language: Language.ENGLISH }),
+        ]);
+
+        const formattedReciters = recitationsRes.map((r) => ({
+          id: r.id!,
+          name: r.reciterName || r.translatedName?.name || "Unknown",
+        }));
+        setReciters(formattedReciters);
+
+        const formattedSurahs = chaptersRes.map((c) => ({
+          value: c.id,
+          name: c.nameSimple,
+          page: c.pages[0],
+        }));
+        setAllSurahs(formattedSurahs);
+
+        if (formattedReciters.length > 0)
+          setCurrentReciter(formattedReciters[0].id);
+      } catch (err) {
+        console.error("Failed to load reciters or chapters", err);
+      } finally {
+        setIsDataLoading(false);
+      }
+    }
+    loadData();
+  }, []);
+
+  // Fetch available chapters for the selected reciter
+  useEffect(() => {
+    if (!currentReciter) return;
+
+    async function loadAvailableChapters() {
+      try {
+        const chapterRecitations =
+          await quranClient.audio.findAllChapterRecitations(
+            String(currentReciter),
+          );
+        const chapterIds = chapterRecitations.map((cr) => cr.chapterId);
+        setAvailableChapterIds(chapterIds);
+
+        // Auto-select the first available chapter if the current one is not available
+        if (chapterIds.length > 0 && !chapterIds.includes(currentSurah)) {
+          const firstAvailable = chapterIds[0];
+          setCurrentSurah(firstAvailable);
+          const surahInfo = allSurahs.find((s) => s.value === firstAvailable);
+          if (surahInfo) setPage(surahInfo.page);
+        }
+      } catch (err) {
+        console.error("Failed to load available chapters for reciter", err);
+        setAvailableChapterIds([]);
+      }
+    }
+    loadAvailableChapters();
+  }, [currentReciter, currentSurah, allSurahs]);
+
+  const { getWordId, registerWord } = useWordTimestamps();
+
+  // Navigate to surah's starting page and play
+  const handlePlay = useCallback(() => {
+    const surahInfo = allSurahs.find((s) => s.value === currentSurah);
+    if (surahInfo) {
+      setPage(surahInfo.page);
+    }
+    play();
+    setIsPlaying(true);
+  }, [currentSurah, play, allSurahs]);
+
+  const handleStop = useCallback(() => {
+    setIsPlaying(false);
+  }, []);
 
   const handlePageChange = useCallback((newPage: number) => {
     setPage(newPage);
@@ -105,14 +173,26 @@ function App() {
   }, []);
 
   const handleLoad = useCallback(
-    (layout: unknown) => {
+    (layout: PageLayout) => {
       console.log("Page loaded:", layout);
-      // Register words for the loaded page after a short delay to let DOM render
+
+      // Register words for timestamps directly from layout
+      if (layout && layout.lines) {
+        layout.lines.forEach((line) => {
+          line.words?.forEach((word) => {
+            if (word.charType === "word") {
+              const verseKey = `${word.surah}:${word.verse}`;
+              registerWord(verseKey, word.position, word.id);
+            }
+          });
+        });
+      }
+
+      // We still need the DOM elements to know their bounding rectangles for highlighting
       setTimeout(() => {
-        const container = document.querySelector('[data-quran-view]');
+        const container = document.querySelector("[data-quran-view]");
         if (!container) return;
 
-        // Find all word elements and register their positions
         const wordElements = container.querySelectorAll("[data-word-id]");
         wordElements.forEach((el) => {
           const wordId = Number(el.getAttribute("data-word-id"));
@@ -122,11 +202,12 @@ function App() {
         });
       }, 100);
     },
-    []
+    [registerWord],
   );
 
-  const handleTimeUpdate = useCallback((timeMs: number) => {
-    setCurrentTime(timeMs);
+  const handleTimeUpdate = useCallback((_timeMs: number) => {
+    console.log(_timeMs);
+    // Currently unused but kept for future progress display
   }, []);
 
   const handleWordHighlight = useCallback((wordId: number | null) => {
@@ -211,7 +292,7 @@ function App() {
           gap: "20px",
         }}
       >
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }} ref={quranContainerRef}>
           <OpenQuranView
             page={page}
             width={500}
@@ -279,16 +360,35 @@ function App() {
           </div>
 
           {/* Audio Controls */}
-          <div style={{ marginTop: "20px", borderTop: "1px solid #ddd", paddingTop: "20px" }}>
-            <h3 style={{ color: theme === "dark" ? "#fff" : "#2c3e50", marginBottom: "10px" }}>
+          <div
+            style={{
+              marginTop: "20px",
+              borderTop: "1px solid #ddd",
+              paddingTop: "20px",
+            }}
+          >
+            <h3
+              style={{
+                color: theme === "dark" ? "#fff" : "#2c3e50",
+                marginBottom: "10px",
+              }}
+            >
               Audio Recitation
             </h3>
 
-            <label style={{ display: "block", marginBottom: "8px", color: theme === "dark" ? "#aaa" : "#666", fontSize: "14px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                color: theme === "dark" ? "#aaa" : "#666",
+                fontSize: "14px",
+              }}
+            >
               Reciter
               <select
                 value={currentReciter}
                 onChange={(e) => setCurrentReciter(Number(e.target.value))}
+                disabled={isDataLoading}
                 style={{
                   width: "100%",
                   padding: "8px",
@@ -299,7 +399,7 @@ function App() {
                   color: theme === "dark" ? "#fff" : "#333",
                 }}
               >
-                {RECITERS.map((r) => (
+                {reciters.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.name}
                   </option>
@@ -307,11 +407,26 @@ function App() {
               </select>
             </label>
 
-            <label style={{ display: "block", marginBottom: "8px", color: theme === "dark" ? "#aaa" : "#666", fontSize: "14px" }}>
+            <label
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                color: theme === "dark" ? "#aaa" : "#666",
+                fontSize: "14px",
+              }}
+            >
               Surah
               <select
                 value={currentSurah}
-                onChange={(e) => setCurrentSurah(Number(e.target.value))}
+                onChange={(e) => {
+                  const newSurah = Number(e.target.value);
+                  setCurrentSurah(newSurah);
+                  const surahInfo = allSurahs.find((s) => s.value === newSurah);
+                  if (surahInfo) {
+                    setPage(surahInfo.page);
+                  }
+                }}
+                disabled={isDataLoading || availableChapterIds.length === 0}
                 style={{
                   width: "100%",
                   padding: "8px",
@@ -322,26 +437,56 @@ function App() {
                   color: theme === "dark" ? "#fff" : "#333",
                 }}
               >
-                {SURAH_OPTIONS.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.value}. {s.name}
-                  </option>
-                ))}
+                {allSurahs
+                  .filter((s) => availableChapterIds.includes(s.value))
+                  .map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.value}. {s.name}
+                    </option>
+                  ))}
               </select>
             </label>
 
+            {/* Play Button */}
+            <button
+              onClick={handlePlay}
+              disabled={audioLoading}
+              style={{
+                width: "100%",
+                padding: "12px",
+                marginTop: "12px",
+                borderRadius: "8px",
+                border: "none",
+                background: audioLoading
+                  ? "#999"
+                  : theme === "dark"
+                    ? "#667eea"
+                    : "#333",
+                color: "#fff",
+                fontSize: "16px",
+                fontWeight: "bold",
+                cursor: audioLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {audioLoading ? "Loading..." : isPlaying ? "Playing..." : "Play"}
+            </button>
+
             {audioError && (
-              <p style={{ color: "#e74c3c", fontSize: "12px", marginTop: "8px" }}>
+              <p
+                style={{ color: "#e74c3c", fontSize: "12px", marginTop: "8px" }}
+              >
                 Error: {audioError}
               </p>
             )}
 
             <AudioPlayer
-              audioUrl={audioUrl}
-              wordTimestamps={wordTimestamps}
+              verses={verses}
+              getWordId={getWordId}
               onTimeUpdate={handleTimeUpdate}
               onWordHighlight={handleWordHighlight}
+              onStop={handleStop}
               theme={theme}
+              autoPlay={isPlaying}
             />
           </div>
         </div>

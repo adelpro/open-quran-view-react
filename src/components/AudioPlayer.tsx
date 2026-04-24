@@ -1,37 +1,66 @@
-import { useRef, useState, useCallback } from "react";
-import type { WordTimestamp } from "../hooks/useWordTimestamps";
+import { useRef, useState, useCallback, useEffect } from "react";
+import type { VerseTimestamp } from "../types/audio";
 
 type Props = {
-  audioUrl: string | null;
-  wordTimestamps: Map<number, WordTimestamp>;
+  verses: VerseTimestamp[];
+  getWordId: (verseKey: string, position: number) => number | undefined;
   onTimeUpdate: (timeMs: number) => void;
   onWordHighlight: (wordId: number | null) => void;
+  onStop: () => void;
   theme: "light" | "dark";
+  autoPlay?: boolean;
 };
 
 export function AudioPlayer({
-  audioUrl,
-  wordTimestamps,
+  verses,
+  getWordId,
   onTimeUpdate,
   onWordHighlight,
+  onStop,
   theme,
+  autoPlay = false,
 }: Props) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [currentVerseIndex, setCurrentVerseIndex] = useState(0);
+
   const lastHighlightRef = useRef<number | null>(null);
+  const autoPlayTriggeredRef = useRef(false);
+
+  // Reset when verses change
+  useEffect(() => {
+    setCurrentVerseIndex(0);
+    setCurrentTime(0);
+    setDuration(0);
+    setPlaying(false);
+    autoPlayTriggeredRef.current = false;
+  }, [verses]);
+
+  // Auto-play when verses becomes available and autoPlay is true
+  useEffect(() => {
+    if (autoPlay && verses.length > 0 && audioRef.current && !autoPlayTriggeredRef.current) {
+      autoPlayTriggeredRef.current = true;
+      audioRef.current.play().catch(console.error);
+      setPlaying(true);
+    }
+  }, [autoPlay, verses]);
+
+  const currentVerse = verses[currentVerseIndex];
 
   const findActiveWord = useCallback(
     (timeMs: number): number | null => {
-      for (const [wordId, { start, end }] of wordTimestamps) {
-        if (timeMs >= start && timeMs <= end) {
-          return wordId;
+      if (!currentVerse) return null;
+      for (const [position, startMs, endMs] of currentVerse.segments) {
+        if (timeMs >= startMs && timeMs <= endMs) {
+          const wordId = getWordId(currentVerse.verse_key, position);
+          return wordId ?? null;
         }
       }
       return null;
     },
-    [wordTimestamps]
+    [currentVerse, getWordId]
   );
 
   const handleTimeUpdate = useCallback(() => {
@@ -52,6 +81,23 @@ export function AudioPlayer({
     const audio = audioRef.current;
     if (audio) setDuration(audio.duration * 1000);
   }, []);
+
+  const handleEnded = useCallback(() => {
+    if (currentVerseIndex < verses.length - 1) {
+      // Play next verse
+      setCurrentVerseIndex(prev => prev + 1);
+      // It will auto-play because the src changes and we call play()
+      setTimeout(() => {
+         audioRef.current?.play().catch(console.error);
+      }, 50);
+    } else {
+      // Finished all verses
+      setPlaying(false);
+      autoPlayTriggeredRef.current = false;
+      onStop();
+      onWordHighlight(null);
+    }
+  }, [currentVerseIndex, verses.length, onStop, onWordHighlight]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
@@ -80,7 +126,7 @@ export function AudioPlayer({
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  if (!audioUrl) {
+  if (!currentVerse) {
     return null;
   }
 
@@ -96,13 +142,13 @@ export function AudioPlayer({
     >
       <audio
         ref={audioRef}
-        src={audioUrl}
+        src={currentVerse.url}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
-        onEnded={() => setPlaying(false)}
+        onEnded={handleEnded}
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
         <button
           onClick={togglePlay}
           style={{
@@ -147,6 +193,9 @@ export function AudioPlayer({
             <span>{formatTime(duration)}</span>
           </div>
         </div>
+      </div>
+      <div style={{ fontSize: "12px", color: theme === "dark" ? "#aaa" : "#666", textAlign: "center" }}>
+        Playing Verse: {currentVerse.verse_key} ({currentVerseIndex + 1} / {verses.length})
       </div>
     </div>
   );
