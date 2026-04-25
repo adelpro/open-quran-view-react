@@ -1907,12 +1907,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"open-quran-view@npm:0.3.2":
-  version: 0.3.2
-  resolution: "open-quran-view@npm:0.3.2"
+"open-quran-view@npm:0.4.0":
+  version: 0.4.0
+  resolution: "open-quran-view@npm:0.4.0"
   peerDependencies:
     react: ">=18"
-  checksum: 10c0/b8502c587b8aeffe9bcbf0b9433b66ffa6eb9ff34490e43e40e84efbdf1db0d4b0c16205e0fcdbd0f19b737bc5d8c057329526bbc8a769d9fc52da9df8004302
+  checksum: 10c0/884a3722befc557813e516e8292e6996955982bff42cd3f830e5e1370d807e1f82db4f5b0fda61d0c5e5eae7a0390eb6871de93d84af3d0e80743dde806b4315
   languageName: node
   linkType: hard
 
@@ -2335,7 +2335,7 @@ __metadata:
     eslint-plugin-react-hooks: "npm:^7.0.1"
     eslint-plugin-react-refresh: "npm:^0.4.24"
     globals: "npm:^16.5.0"
-    open-quran-view: "npm:0.3.2"
+    open-quran-view: "npm:0.4.0"
     react: "npm:^18.2.0"
     react-dom: "npm:^18.2.0"
     typescript: "npm:~5.9.3"

@@ -15,9 +15,8 @@ import type {
 } from "./types/tafseer";
 import { TafseerDialog } from "./components/TafseerDialog";
 import { AudioPlayer } from "./components/AudioPlayer";
-import type { AudioPlayerHandle } from "./components/AudioPlayer";
+import type { AudioPlayerHandle, WordLocation } from "./components/AudioPlayer";
 import { useChapterRecitation } from "./hooks/useChapterRecitation";
-import { useWordTimestamps } from "./hooks/useWordTimestamps";
 import { quranClient } from "./lib/quranClient";
 import { Language } from "@quranjs/api";
 
@@ -41,10 +40,20 @@ function App() {
   const [currentSurah, setCurrentSurah] = useState<number>(1);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // Highlight state
+  const [highlightedWords, setHighlightedWords] = useState<WordLocation[]>([]);
+  const [highlightedVerse, setHighlightedVerse] = useState<{
+    surah: number;
+    verse: number;
+  } | null>(null);
+
+  const wordsOnPageRef = useRef<Set<string>>(new Set());
+  const isNavigatingRef = useRef<boolean>(false);
+
   const quranContainerRef = useRef<HTMLDivElement>(null);
   const audioPlayerRef = useRef<AudioPlayerHandle>(null);
 
-  const { chapterAudio, loading: audioLoading, error: audioError, play } =
+  const { chapterAudio, loading: audioLoading, error: audioError, play: startChapterRecitation } =
     useChapterRecitation(currentReciter, currentSurah);
 
   const [reciters, setReciters] = useState<{ id: number; name: string }[]>([]);
@@ -116,8 +125,6 @@ function App() {
     loadAvailableChapters();
   }, [currentReciter, currentSurah, allSurahs]);
 
-  const { getWordId, registerWord } = useWordTimestamps();
-
   // Navigate to surah's starting page and play
   const handlePlay = useCallback(() => {
     if (!isPlaying) {
@@ -126,16 +133,19 @@ function App() {
       if (surahInfo) {
         setPage(surahInfo.page);
       }
-      play();
+      startChapterRecitation();
       setIsPlaying(true);
     } else {
       // Already started: just toggle play/pause on the audio element
       audioPlayerRef.current?.togglePlay();
     }
-  }, [currentSurah, play, allSurahs, isPlaying]);
+  }, [currentSurah, startChapterRecitation, allSurahs, isPlaying]);
 
   const handleStop = useCallback(() => {
     setIsPlaying(false);
+    setHighlightedWords([]);
+    setHighlightedVerse(null);
+    isNavigatingRef.current = false;
   }, []);
 
   const handlePageChange = useCallback((newPage: number) => {
@@ -176,42 +186,55 @@ function App() {
     setSelectedTafseer(null);
   }, []);
 
-  const handleLoad = useCallback(
-    (layout: PageLayout) => {
-      console.log("Page loaded:", layout);
+  const handleLoad = useCallback((layout: PageLayout) => {
+    console.log("Page loaded:", layout);
+    
+    // Build set of words on the current page
+    const words = new Set<string>();
+    layout.lines.forEach(line => {
+      line.words?.forEach(word => {
+        if (word.charType === 'word') {
+          words.add(`${word.surah}:${word.verse}:${word.position}`);
+        }
+      });
+    });
+    wordsOnPageRef.current = words;
 
-      // Register words for timestamps directly from layout
-      if (layout && layout.lines) {
-        layout.lines.forEach((line) => {
-          line.words?.forEach((word) => {
-            if (word.charType === "word") {
-              const verseKey = `${word.surah}:${word.verse}`;
-              registerWord(verseKey, word.position, word.id);
-            }
-          });
-        });
-      }
-    },
-    [registerWord],
-  );
+    // If we were waiting for a page load to resume, do it now
+    if (isNavigatingRef.current) {
+      isNavigatingRef.current = false;
+      // Small delay to ensure rendering is settled before resuming
+      setTimeout(() => {
+        audioPlayerRef.current?.play();
+      }, 150);
+    }
+  }, []);
 
   const handleTimeUpdate = useCallback((_timeMs: number) => {
-    console.log(_timeMs);
     // Currently unused but kept for future progress display
   }, []);
 
-  const handleWordHighlight = useCallback((wordId: number | null) => {
-    // Remove previous highlights
-    document.querySelectorAll('.word-highlighted').forEach((el) => {
-      el.classList.remove('word-highlighted');
-    });
+  const handleWordHighlight = useCallback((location: WordLocation | null) => {
+    setHighlightedWords(location ? [location] : []);
 
-    // Add highlight to current word
-    if (wordId !== null) {
-      const el = document.querySelector(`[data-word-id="${wordId}"]`);
-      if (el) {
-        el.classList.add('word-highlighted');
+    if (location && isPlaying) {
+      const key = `${location.surah}:${location.verse}:${location.position}`;
+      if (!wordsOnPageRef.current.has(key) && !isNavigatingRef.current) {
+        // Word is not on current page!
+        console.log("Auto-navigating to next page for word:", key);
+        isNavigatingRef.current = true;
+        audioPlayerRef.current?.pause();
+        setPage(prev => Math.min(prev + 1, 604));
       }
+    }
+  }, [isPlaying]);
+
+  const handleVerseChange = useCallback((verseKey: string | null) => {
+    if (verseKey) {
+      const [surah, verse] = verseKey.split(":").map(Number);
+      setHighlightedVerse({ surah, verse });
+    } else {
+      setHighlightedVerse(null);
     }
   }, []);
 
@@ -298,6 +321,8 @@ function App() {
             onPageChange={handlePageChange}
             onWordClick={handleWordClick}
             onLoad={handleLoad}
+            highlightedWords={highlightedWords}
+            highlightedVerse={highlightedVerse}
           />
         </div>
 
@@ -461,9 +486,9 @@ function App() {
             <AudioPlayer
               ref={audioPlayerRef}
               chapterAudio={chapterAudio}
-              getWordId={getWordId}
               onTimeUpdate={handleTimeUpdate}
               onWordHighlight={handleWordHighlight}
+              onVerseChange={handleVerseChange}
               onStop={handleStop}
               onPlayingChange={setIsPlaying}
               theme={theme}

@@ -3,14 +3,21 @@ import type { ChapterAudioData, VerseTiming } from "../types/audio";
 
 export type AudioPlayerHandle = {
   togglePlay: () => void;
+  play: () => void;
+  pause: () => void;
   playing: boolean;
+};
+
+export type WordLocation = {
+  surah: number;
+  verse: number;
+  position: number;
 };
 
 type Props = {
   chapterAudio: ChapterAudioData | null;
-  getWordId: (verseKey: string, position: number) => number | undefined;
   onTimeUpdate: (timeMs: number) => void;
-  onWordHighlight: (wordId: number | null) => void;
+  onWordHighlight: (location: WordLocation | null) => void;
   onVerseChange?: (verseKey: string) => void;
   onStop: () => void;
   onPlayingChange?: (playing: boolean) => void;
@@ -21,7 +28,6 @@ type Props = {
 export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
   {
     chapterAudio,
-    getWordId,
     onTimeUpdate,
     onWordHighlight,
     onVerseChange,
@@ -37,7 +43,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPl
   const [currentTime, setCurrentTime] = useState(0);
   const [currentVerse, setCurrentVerse] = useState<VerseTiming | null>(null);
 
-  const lastHighlightRef = useRef<number | null>(null);
+  const lastHighlightRef = useRef<string | null>(null);
   const lastVerseRef = useRef<string | null>(null);
   const autoPlayTriggeredRef = useRef(false);
 
@@ -47,6 +53,7 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPl
     setCurrentVerse(null);
     setPlaying(false);
     autoPlayTriggeredRef.current = false;
+    lastHighlightRef.current = null;
   }, [chapterAudio]);
 
   // Auto-play when triggered from parent
@@ -82,24 +89,25 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPl
     }
 
     // Find active word
-    let activeWordId: number | null = null;
+    let activeLocation: WordLocation | null = null;
+    let locationKey: string | null = null;
+
     if (activeVerse) {
       for (const [position, startMs, endMs] of activeVerse.segments) {
         if (timeMs >= startMs && timeMs <= endMs) {
-          const wordId = getWordId(activeVerse.verse_key, position);
-          if (wordId) {
-            activeWordId = wordId;
-            break;
-          }
+          const [surah, verse] = activeVerse.verse_key.split(":").map(Number);
+          activeLocation = { surah, verse, position };
+          locationKey = `${surah}:${verse}:${position}`;
+          break;
         }
       }
     }
 
-    if (activeWordId !== lastHighlightRef.current) {
-      lastHighlightRef.current = activeWordId;
-      onWordHighlight(activeWordId);
+    if (locationKey !== lastHighlightRef.current) {
+      lastHighlightRef.current = locationKey;
+      onWordHighlight(activeLocation);
     }
-  }, [chapterAudio, getWordId, onTimeUpdate, onWordHighlight, onVerseChange]);
+  }, [chapterAudio, onTimeUpdate, onWordHighlight, onVerseChange]);
 
   const handleEnded = useCallback(() => {
     setPlaying(false);
@@ -109,22 +117,32 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPl
     onWordHighlight(null);
   }, [onStop, onWordHighlight, onPlayingChange]);
 
-  const togglePlay = useCallback(() => {
+  const play = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (playing) {
-      audio.pause();
-      setPlaying(false);
-      onPlayingChange?.(false);
-    } else {
-      audio.play().catch(console.error);
-      setPlaying(true);
-      onPlayingChange?.(true);
-    }
-  }, [playing, onPlayingChange]);
+    audio.play().catch(console.error);
+    setPlaying(true);
+    onPlayingChange?.(true);
+  }, [onPlayingChange]);
 
-  // Expose togglePlay and playing to parent via ref
-  useImperativeHandle(ref, () => ({ togglePlay, playing }), [togglePlay, playing]);
+  const pause = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.pause();
+    setPlaying(false);
+    onPlayingChange?.(false);
+  }, [onPlayingChange]);
+
+  const togglePlay = useCallback(() => {
+    if (playing) {
+      pause();
+    } else {
+      play();
+    }
+  }, [playing, play, pause]);
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({ togglePlay, play, pause, playing }), [togglePlay, play, pause, playing]);
 
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
