@@ -155,3 +155,9 @@
   justify-content: center;
   margin-top: 8px;
 }
+
+.word-highlighted {
+  background: rgba(102, 126, 234, 0.4);
+  border-radius: 4px;
+  transition: background 0.1s ease-out;
+}

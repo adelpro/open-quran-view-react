@@ -15,6 +15,7 @@ import type {
 } from "./types/tafseer";
 import { TafseerDialog } from "./components/TafseerDialog";
 import { AudioPlayer } from "./components/AudioPlayer";
+import type { AudioPlayerHandle } from "./components/AudioPlayer";
 import { useChapterRecitation } from "./hooks/useChapterRecitation";
 import { useWordTimestamps } from "./hooks/useWordTimestamps";
 import { quranClient } from "./lib/quranClient";
@@ -38,15 +39,12 @@ function App() {
   // Audio state
   const [currentReciter, setCurrentReciter] = useState<number>(1);
   const [currentSurah, setCurrentSurah] = useState<number>(1);
-  const [activeWordRect, setActiveWordRect] = useState<DOMRect | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
   const quranContainerRef = useRef<HTMLDivElement>(null);
+  const audioPlayerRef = useRef<AudioPlayerHandle>(null);
 
-  // Word registry for highlighting
-  const wordRectsRef = useRef<Map<number, DOMRect>>(new Map());
-
-  const { verses, loading: audioLoading, error: audioError, play } =
+  const { chapterAudio, loading: audioLoading, error: audioError, play } =
     useChapterRecitation(currentReciter, currentSurah);
 
   const [reciters, setReciters] = useState<{ id: number; name: string }[]>([]);
@@ -122,13 +120,19 @@ function App() {
 
   // Navigate to surah's starting page and play
   const handlePlay = useCallback(() => {
-    const surahInfo = allSurahs.find((s) => s.value === currentSurah);
-    if (surahInfo) {
-      setPage(surahInfo.page);
+    if (!isPlaying) {
+      // First play: navigate to the surah's starting page
+      const surahInfo = allSurahs.find((s) => s.value === currentSurah);
+      if (surahInfo) {
+        setPage(surahInfo.page);
+      }
+      play();
+      setIsPlaying(true);
+    } else {
+      // Already started: just toggle play/pause on the audio element
+      audioPlayerRef.current?.togglePlay();
     }
-    play();
-    setIsPlaying(true);
-  }, [currentSurah, play, allSurahs]);
+  }, [currentSurah, play, allSurahs, isPlaying]);
 
   const handleStop = useCallback(() => {
     setIsPlaying(false);
@@ -187,20 +191,6 @@ function App() {
           });
         });
       }
-
-      // We still need the DOM elements to know their bounding rectangles for highlighting
-      setTimeout(() => {
-        const container = document.querySelector("[data-quran-view]");
-        if (!container) return;
-
-        const wordElements = container.querySelectorAll("[data-word-id]");
-        wordElements.forEach((el) => {
-          const wordId = Number(el.getAttribute("data-word-id"));
-          if (wordId && el instanceof HTMLElement) {
-            wordRectsRef.current.set(wordId, el.getBoundingClientRect());
-          }
-        });
-      }, 100);
     },
     [registerWord],
   );
@@ -211,11 +201,17 @@ function App() {
   }, []);
 
   const handleWordHighlight = useCallback((wordId: number | null) => {
+    // Remove previous highlights
+    document.querySelectorAll('.word-highlighted').forEach((el) => {
+      el.classList.remove('word-highlighted');
+    });
+
+    // Add highlight to current word
     if (wordId !== null) {
-      const rect = wordRectsRef.current.get(wordId);
-      setActiveWordRect(rect ?? null);
-    } else {
-      setActiveWordRect(null);
+      const el = document.querySelector(`[data-word-id="${wordId}"]`);
+      if (el) {
+        el.classList.add('word-highlighted');
+      }
     }
   }, []);
 
@@ -292,7 +288,7 @@ function App() {
           gap: "20px",
         }}
       >
-        <div style={{ position: "relative" }} ref={quranContainerRef}>
+        <div style={{ position: "relative", minHeight: "700px", minWidth: "500px" }} ref={quranContainerRef}>
           <OpenQuranView
             page={page}
             width={500}
@@ -303,23 +299,6 @@ function App() {
             onWordClick={handleWordClick}
             onLoad={handleLoad}
           />
-
-          {/* Word highlight overlay */}
-          {activeWordRect && (
-            <div
-              style={{
-                position: "absolute",
-                top: activeWordRect.top,
-                left: activeWordRect.left,
-                width: activeWordRect.width,
-                height: activeWordRect.height,
-                background: "rgba(102, 126, 234, 0.4)",
-                borderRadius: "4px",
-                pointerEvents: "none",
-                transition: "all 0.1s ease-out",
-              }}
-            />
-          )}
         </div>
 
         <div
@@ -468,7 +447,7 @@ function App() {
                 cursor: audioLoading ? "not-allowed" : "pointer",
               }}
             >
-              {audioLoading ? "Loading..." : isPlaying ? "Playing..." : "Play"}
+              {audioLoading ? "Loading..." : isPlaying ? "⏸ Pause" : "▶ Play"}
             </button>
 
             {audioError && (
@@ -480,11 +459,13 @@ function App() {
             )}
 
             <AudioPlayer
-              verses={verses}
+              ref={audioPlayerRef}
+              chapterAudio={chapterAudio}
               getWordId={getWordId}
               onTimeUpdate={handleTimeUpdate}
               onWordHighlight={handleWordHighlight}
               onStop={handleStop}
+              onPlayingChange={setIsPlaying}
               theme={theme}
               autoPlay={isPlaying}
             />

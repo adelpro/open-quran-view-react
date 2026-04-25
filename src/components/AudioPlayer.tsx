@@ -1,123 +1,139 @@
-import { useRef, useState, useCallback, useEffect } from "react";
-import type { VerseTimestamp } from "../types/audio";
+import { useRef, useState, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
+import type { ChapterAudioData, VerseTiming } from "../types/audio";
+
+export type AudioPlayerHandle = {
+  togglePlay: () => void;
+  playing: boolean;
+};
 
 type Props = {
-  verses: VerseTimestamp[];
+  chapterAudio: ChapterAudioData | null;
   getWordId: (verseKey: string, position: number) => number | undefined;
   onTimeUpdate: (timeMs: number) => void;
   onWordHighlight: (wordId: number | null) => void;
+  onVerseChange?: (verseKey: string) => void;
   onStop: () => void;
+  onPlayingChange?: (playing: boolean) => void;
   theme: "light" | "dark";
   autoPlay?: boolean;
 };
 
-export function AudioPlayer({
-  verses,
-  getWordId,
-  onTimeUpdate,
-  onWordHighlight,
-  onStop,
-  theme,
-  autoPlay = false,
-}: Props) {
+export const AudioPlayer = forwardRef<AudioPlayerHandle, Props>(function AudioPlayer(
+  {
+    chapterAudio,
+    getWordId,
+    onTimeUpdate,
+    onWordHighlight,
+    onVerseChange,
+    onStop,
+    onPlayingChange,
+    theme,
+    autoPlay = false,
+  },
+  ref
+) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [currentVerseIndex, setCurrentVerseIndex] = useState(0);
+  const [currentVerse, setCurrentVerse] = useState<VerseTiming | null>(null);
 
   const lastHighlightRef = useRef<number | null>(null);
+  const lastVerseRef = useRef<string | null>(null);
   const autoPlayTriggeredRef = useRef(false);
 
-  // Reset when verses change
+  // Reset when audio changes
   useEffect(() => {
-    setCurrentVerseIndex(0);
     setCurrentTime(0);
-    setDuration(0);
+    setCurrentVerse(null);
     setPlaying(false);
     autoPlayTriggeredRef.current = false;
-  }, [verses]);
+  }, [chapterAudio]);
 
-  // Auto-play when verses becomes available and autoPlay is true
+  // Auto-play when triggered from parent
   useEffect(() => {
-    if (autoPlay && verses.length > 0 && audioRef.current && !autoPlayTriggeredRef.current) {
+    if (autoPlay && chapterAudio && audioRef.current && !autoPlayTriggeredRef.current) {
       autoPlayTriggeredRef.current = true;
       audioRef.current.play().catch(console.error);
       setPlaying(true);
+      onPlayingChange?.(true);
     }
-  }, [autoPlay, verses]);
-
-  const currentVerse = verses[currentVerseIndex];
-
-  const findActiveWord = useCallback(
-    (timeMs: number): number | null => {
-      if (!currentVerse) return null;
-      for (const [position, startMs, endMs] of currentVerse.segments) {
-        if (timeMs >= startMs && timeMs <= endMs) {
-          const wordId = getWordId(currentVerse.verse_key, position);
-          return wordId ?? null;
-        }
-      }
-      return null;
-    },
-    [currentVerse, getWordId]
-  );
+  }, [autoPlay, chapterAudio, onPlayingChange]);
 
   const handleTimeUpdate = useCallback(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !chapterAudio) return;
+
     const timeMs = audio.currentTime * 1000;
     setCurrentTime(timeMs);
     onTimeUpdate(timeMs);
 
-    const activeWord = findActiveWord(timeMs);
-    if (activeWord !== lastHighlightRef.current) {
-      lastHighlightRef.current = activeWord;
-      onWordHighlight(activeWord);
-    }
-  }, [findActiveWord, onTimeUpdate, onWordHighlight]);
+    // Find active verse
+    const activeVerse = chapterAudio.verse_timings.find(
+      (v) => timeMs >= v.timestamp_from && timeMs <= v.timestamp_to
+    );
 
-  const handleLoadedMetadata = useCallback(() => {
-    const audio = audioRef.current;
-    if (audio) setDuration(audio.duration * 1000);
-  }, []);
+    if (activeVerse && activeVerse.verse_key !== lastVerseRef.current) {
+      lastVerseRef.current = activeVerse.verse_key;
+      setCurrentVerse(activeVerse);
+      onVerseChange?.(activeVerse.verse_key);
+    } else if (!activeVerse && lastVerseRef.current !== null) {
+      lastVerseRef.current = null;
+      setCurrentVerse(null);
+    }
+
+    // Find active word
+    let activeWordId: number | null = null;
+    if (activeVerse) {
+      for (const [position, startMs, endMs] of activeVerse.segments) {
+        if (timeMs >= startMs && timeMs <= endMs) {
+          const wordId = getWordId(activeVerse.verse_key, position);
+          if (wordId) {
+            activeWordId = wordId;
+            break;
+          }
+        }
+      }
+    }
+
+    if (activeWordId !== lastHighlightRef.current) {
+      lastHighlightRef.current = activeWordId;
+      onWordHighlight(activeWordId);
+    }
+  }, [chapterAudio, getWordId, onTimeUpdate, onWordHighlight, onVerseChange]);
 
   const handleEnded = useCallback(() => {
-    if (currentVerseIndex < verses.length - 1) {
-      // Play next verse
-      setCurrentVerseIndex(prev => prev + 1);
-      // It will auto-play because the src changes and we call play()
-      setTimeout(() => {
-         audioRef.current?.play().catch(console.error);
-      }, 50);
-    } else {
-      // Finished all verses
-      setPlaying(false);
-      autoPlayTriggeredRef.current = false;
-      onStop();
-      onWordHighlight(null);
-    }
-  }, [currentVerseIndex, verses.length, onStop, onWordHighlight]);
+    setPlaying(false);
+    autoPlayTriggeredRef.current = false;
+    onStop();
+    onPlayingChange?.(false);
+    onWordHighlight(null);
+  }, [onStop, onWordHighlight, onPlayingChange]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (playing) {
       audio.pause();
+      setPlaying(false);
+      onPlayingChange?.(false);
     } else {
-      audio.play();
+      audio.play().catch(console.error);
+      setPlaying(true);
+      onPlayingChange?.(true);
     }
-    setPlaying(!playing);
-  }, [playing]);
+  }, [playing, onPlayingChange]);
+
+  // Expose togglePlay and playing to parent via ref
+  useImperativeHandle(ref, () => ({ togglePlay, playing }), [togglePlay, playing]);
 
   const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !chapterAudio) return;
     const newTime = Number(e.target.value);
     audio.currentTime = newTime / 1000;
     setCurrentTime(newTime);
     onTimeUpdate(newTime);
-  }, [onTimeUpdate]);
+  }, [chapterAudio, onTimeUpdate]);
 
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
@@ -126,9 +142,11 @@ export function AudioPlayer({
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
-  if (!currentVerse) {
+  if (!chapterAudio) {
     return null;
   }
+
+  const durationMs = chapterAudio.duration || 0;
 
   return (
     <div
@@ -142,61 +160,49 @@ export function AudioPlayer({
     >
       <audio
         ref={audioRef}
-        src={currentVerse.url}
+        src={chapterAudio.audio_url}
         onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
       />
 
-      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "8px" }}>
-        <button
-          onClick={togglePlay}
+      {/* Seek bar */}
+      <div style={{ flex: 1 }}>
+        <input
+          type="range"
+          min={0}
+          max={durationMs}
+          value={currentTime}
+          onChange={handleSeek}
           style={{
-            width: "40px",
-            height: "40px",
-            borderRadius: "50%",
-            border: "none",
-            background: theme === "dark" ? "#667eea" : "#333",
-            color: "#fff",
-            cursor: "pointer",
-            fontSize: "18px",
+            width: "100%",
+            accentColor: theme === "dark" ? "#667eea" : "#333",
+          }}
+        />
+        <div
+          style={{
             display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            justifyContent: "space-between",
+            fontSize: "12px",
+            color: theme === "dark" ? "#aaa" : "#666",
+            marginTop: "4px",
           }}
         >
-          {playing ? "⏸" : "▶"}
-        </button>
-
-        <div style={{ flex: 1 }}>
-          <input
-            type="range"
-            min={0}
-            max={duration}
-            value={currentTime}
-            onChange={handleSeek}
-            style={{
-              width: "100%",
-              accentColor: theme === "dark" ? "#667eea" : "#333",
-            }}
-          />
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              fontSize: "12px",
-              color: theme === "dark" ? "#aaa" : "#666",
-              marginTop: "4px",
-            }}
-          >
-            <span>{formatTime(currentTime)}</span>
-            <span>{formatTime(duration)}</span>
-          </div>
+          <span>{formatTime(currentTime)}</span>
+          <span>{formatTime(durationMs)}</span>
         </div>
       </div>
-      <div style={{ fontSize: "12px", color: theme === "dark" ? "#aaa" : "#666", textAlign: "center" }}>
-        Playing Verse: {currentVerse.verse_key} ({currentVerseIndex + 1} / {verses.length})
+
+      <div
+        style={{
+          fontSize: "12px",
+          color: theme === "dark" ? "#aaa" : "#666",
+          textAlign: "center",
+          minHeight: "18px",
+          marginTop: "8px",
+        }}
+      >
+        {currentVerse ? `Verse: ${currentVerse.verse_key}` : " "}
       </div>
     </div>
   );
-}
+});
